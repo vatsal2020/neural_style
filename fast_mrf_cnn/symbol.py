@@ -91,6 +91,47 @@ def vgg_symbol(data, weight, bias):
     relu3_1 = mx.symbol.Activation(name='relu3_1', data=conv3_1 , act_type='relu')
     return relu3_1
 
+
+def descriptor_symbol(num_res):
+    data = mx.sym.Variable('data')
+    weight_var = {}
+    bias_var = {}
+    beta_var = {}
+    gamma_var = {}
+    running_mean_var = {}
+    running_var_var = {}
+    stages = ['stage1_', 'stage2_', 'stage3_', 'stage4_']
+    convs = ['conv0', 'conv1', 'conv2', 'conv2_2', 'conv3_1']
+    bns = ['batchnorm0', 'batchnorm1', 'batchnorm2', 'batchnorm3', 'batchnorm4']
+    for j in stages:
+        for k in convs:
+            weight_var[k] = mx.sym.Variable(j+k+'_weight')
+        for k in convs:
+            bias_var[k] = mx.sym.Variable(j+k+'_bias')
+        for k in bns:
+            beta_var[k] = mx.sym.Variable(j+k+'_beta')
+        for k in bns:
+            gamma_var[k] = mx.sym.Variable(j+k+'_gamma')
+        for k in bns:
+            running_mean_var[k] = mx.sym.Variable(j+k+'_running_mean')
+        for k in bns:
+            running_var_var[k] = mx.sym.Variable(j+k+'_running_var')
+        out = resnet_symbol(data, weight_var, bias_var, beta_var, gamma_var, running_mean_var, running_var_var)
+    for i in range(num_res-1):
+        data = mx.sym.Pooling(data=data, kernel=(2,2), stride=(2,2), pad=(0,0), pool_type='avg')
+        out = mx.sym.Group([out, resnet_symbol(data, weight_var, bias_var, beta_var, gamma_var, running_mean_var, running_var_var)])
+    return out
+
+def resnet_symbol(data, weight, bias, beta, gamma, running_mean, running_var):
+    def conv(name, data, num_filter, pad, kernel, stride, no_bias, workspace):
+        return mx.sym.Convolution(name=name, data=data, weight=weight[name], bias=bias[name], num_filter=num_filter, pad=pad, kernel=kernel, stride=stride, no_bias=no_bias, workspace=workspace)
+    conv1_1 = conv(name='conv1_1', data=data , num_filter=64, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
+    bn1_1 = mx.symbol.BatchNorm(name='bn1_1', data=conv1_1, gamma=gamma, beta=beta, moving_mean=moving_mean, moving_var=moving_var)
+    relu1_1 = mx.symbol.Activation(name='relu1_1', data=bn1_1, act_type='relu')
+    conv1_2 = conv(name='conv1_2', data=relu1_1 , num_filter=64, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
+    bn1_2 = mx.symbol.BatchNorm(name='bn1_2', data=conv1_2, gamma=gamma, beta=beta, moving_mean=moving_mean, moving_var=moving_var)
+    return bn1_2
+
 class AssignPatch(mx.operator.NDArrayOp):
     def __init__(self):
         super(AssignPatch, self).__init__(False)
@@ -112,19 +153,20 @@ class AssignPatch(mx.operator.NDArrayOp):
         nn, source = in_data
         target = out_data[0]
         if self.fwd_kernel is None:
-            self.fwd_kernel = mx.rtc('assignpatch', [('nn', nn), ('source', source)], [('target', target)], """
-                int target_idx = threadIdx.x*target_dims[3]*target_dims[2]+blockIdx.x*target_dims[3]+blockIdx.y;
-                int source_idx = nn[blockIdx.x*nn_dims[1]+blockIdx.y]*source_dims[1]*source_dims[2]*source_dims[3]
-                                    + threadIdx.x*source_dims[2]*source_dims[3];
-                for (int i = 0; i < source_dims[2]; i++){
-                    for (int j = 0; j < source_dims[3]; j++){
-                        atomicAdd(target+target_idx, source[source_idx]);
-                        target_idx++;
-                        source_idx++;
-                    }
-                    target_idx += target_dims[3]-source_dims[3];
-                }
-            """)
+            self.fwd_kernel = mx.rtc('assignpatch', [('nn', nn), ('source', source)], [('target', target)],
+                                     """
+                                            int target_idx = threadIdx.x*target_dims[3]*target_dims[2]+blockIdx.x*target_dims[3]+blockIdx.y;
+                                            int source_idx = nn[blockIdx.x*nn_dims[1]+blockIdx.y]*source_dims[1]*source_dims[2]*source_dims[3]
+                                                                + threadIdx.x*source_dims[2]*source_dims[3];
+                                            for (int i = 0; i < source_dims[2]; i++){
+                                                for (int j = 0; j < source_dims[3]; j++){
+                                                    atomicAdd(target+target_idx, source[source_idx]);
+                                                    target_idx++;
+                                                    source_idx++;
+                                                }
+                                                target_idx += target_dims[3]-source_dims[3];
+                                            }
+                                     """)
         self.fwd_kernel.push([nn, source], [target], (target.shape[2]-source.shape[2]+1, target.shape[3]-source.shape[3]+1, 1), (source.shape[1],1,1))
 
 

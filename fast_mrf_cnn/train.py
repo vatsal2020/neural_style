@@ -27,8 +27,8 @@ parser.add_argument('--stride', type=int)
 parser.add_argument('--patch-size', type=int)
 
 args = parser.parse_args()
-VGGPATH = '../vgg19.params'
-COCOPATH = '/home/zw/dataset/mscoco'
+VGGPATH = '../resnet18.params'
+COCOPATH = '/home/ubuntu/data/train2014'
 
 try:
     os.mkdir(args.model_name)
@@ -156,6 +156,7 @@ tv_grad_executor = get_tv_grad_executor(vgg_executor.arg_dict['data'], mx.gpu(),
 optimizer = mx.optimizer.SGD(learning_rate=args.lr, wd=0e-0, momentum=0.9)
 
 # get mrf executor
+print('get mrf exceutors')
 mrf_executors = []
 target_patch = []
 for l in range(args.num_res):
@@ -179,6 +180,7 @@ for l in range(args.num_res):
     ass_executors.append(assign_executor)
     nns.append(nn)
 
+print('get cocopath')
 img_list = os.listdir(COCOPATH)
 for idx in range(args.num_image):
 #    break
