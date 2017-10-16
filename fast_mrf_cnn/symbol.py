@@ -92,7 +92,9 @@ def vgg_symbol(data, weight, bias):
     return relu3_1
 
 
-def descriptor_symbol(num_res):
+def descriptor_resnet_symbol(num_res):
+    def conv(name, data, num_filter, pad, kernel, stride, no_bias, workspace):
+        return mx.sym.Convolution(name=name, data=data, weight=weight[name], bias=bias[name], num_filter=num_filter, pad=pad, kernel=kernel, stride=stride, no_bias=no_bias, workspace=workspace)
     data = mx.sym.Variable('data')
     weight_var = {}
     bias_var = {}
@@ -117,7 +119,7 @@ def descriptor_symbol(num_res):
         for k in bns:
             running_var_var[k] = mx.sym.Variable(j+k+'_running_var')
         out = resnet_symbol(data, weight_var, bias_var, beta_var, gamma_var, running_mean_var, running_var_var)
-    for i in range(num_res-1):
+    for i in range(num_res-1):z
         data = mx.sym.Pooling(data=data, kernel=(2,2), stride=(2,2), pad=(0,0), pool_type='avg')
         out = mx.sym.Group([out, resnet_symbol(data, weight_var, bias_var, beta_var, gamma_var, running_mean_var, running_var_var)])
     return out

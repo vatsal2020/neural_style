@@ -12,3 +12,7 @@ texturenet/pretrained/output
 texturenet/pretrained/models
 old_stuff/out
 old_stuff/models
+resnet18.params
+fast_mrf_cnn/models
+*_encoder/
+.ipynb_checkpoints/

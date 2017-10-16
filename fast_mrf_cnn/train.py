@@ -27,7 +27,7 @@ parser.add_argument('--stride', type=int)
 parser.add_argument('--patch-size', type=int)
 
 args = parser.parse_args()
-VGGPATH = '../resnet18.params'
+VGGPATH = '../vgg19.params' #resnet18.params'
 COCOPATH = '/home/ubuntu/data/train2014'
 
 try:
