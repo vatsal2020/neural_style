@@ -27,7 +27,8 @@ parser.add_argument('--stride', type=int)
 parser.add_argument('--patch-size', type=int)
 
 args = parser.parse_args()
-VGGPATH = '../vgg19.params' #resnet18.params'
+VGGPATH = 'vgg19-0000.params'
+RESNETPATH = '../resnet-18-0000.params'
 COCOPATH = '/home/ubuntu/data/train2014'
 
 try:
@@ -104,9 +105,28 @@ def get_tv_grad_executor(img, ctx, tv_weight):
                                "kernel": kernel})
 
 
-vgg_symbol = symbol.descriptor_symbol(args.num_res)
+import os, urllib
+def download(url):
+    filename = url.split("/")[-1]
+    if not os.path.exists(filename):
+        urllib.urlretrieve(url, filename)
+
+def get_model(prefix, epoch):
+    download(prefix+'-symbol.json')
+    download(prefix+'-%04d.params' % (epoch,))
+
+#get_model('http://data.mxnet.io/models/imagenet/resnet/18-layers/resnet-18', 0000)
+#resnet_symbol, arg_params, aux_params = mx.model.load_checkpoint('resnet-18', 0000)
+get_model('http://data.mxnet.io/models/imagenet/vgg19', 0000)
+resnet_symbol, arg_params, aux_params = mx.model.load_checkpoint('vgg19', 0000)
+vgg_symbol = resnet_symbol
 arg_names = vgg_symbol.list_arguments()
 arg_dict = {}
+pretrained = mx.nd.load(RESNETPATH)
+
+#vgg_symbol = symbol.descriptor_symbol(args.num_res)
+#arg_names = vgg_symbol.list_arguments()
+#arg_dict = {}
 pretrained = mx.nd.load(VGGPATH)
 for name in arg_names:
     if name == "data":
@@ -133,6 +153,7 @@ for s in scales:
     arg_dict['data'] = mx.nd.zeros([len(rotations),3,scaled.shape[0],scaled.shape[1]], mx.gpu())
     for r in range(len(rotations)):
         arg_dict['data'][r:r+1] = preprocess_img(transform.rotate(scaled, rotations[r], mode='reflect'))
+    print(arg_dict.keys())
     vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
     vgg_executor.forward()
     for l in range(args.num_res):
@@ -225,7 +246,7 @@ for idx in range(args.num_image):
     io.imsave('%s/data/image%d.jpg'%(args.model_name, idx), img)
 
 # Train a generative network
-vgg_symbol = symbol.descriptor_symbol(1)
+vgg_symbol = vgg_symbol# resnet_symbol #symbol.descriptor_symbol(1)
 vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
 decoder = symbol.decoder_symbol()
 arg_shapes, output_shapes, aux_shapes = decoder.infer_shape(data=vgg_executor.outputs[0].shape)
