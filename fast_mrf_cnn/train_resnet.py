@@ -139,7 +139,7 @@ mod.set_params(arg_params, aux_params, allow_missing=True)
 all_layers = sym.get_internals()
 fe_sym = all_layers['flatten0_output']
 arg_names = fe_sym.list_arguments()
-#print(arg_names)
+print(arg_names)
 arg_dict = {}
 arg_params = {('%s' % k) : v.as_in_context(mx.gpu()) for k, v in arg_params.items()}
 aux_params = {('%s' % k) : v.as_in_context(mx.gpu()) for k, v in aux_params.items()}
