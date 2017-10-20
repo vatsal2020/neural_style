@@ -27,7 +27,7 @@ parser.add_argument('--stride', type=int)
 parser.add_argument('--patch-size', type=int)
 
 args = parser.parse_args()
-VGGPATH = '../vgg19-0000.params'
+VGGPATH = '../vgg19.params'
 RESNETPATH= '../resnet18.params'
 COCOPATH = '/home/ubuntu/data/train2014'
 
@@ -129,7 +129,7 @@ def get_fine_tune_model(symbol, arg_params, num_classes, layer_name='flatten0'):
 #print(arg_names)
 #arg_dict = {}
 #pretrained = mx.nd.load(VGGPATH)
-'''
+
 
 sym, arg_params, aux_params = mx.model.load_checkpoint('../resnet-18', 0)
 mod = mx.mod.Module(symbol=sym, context=mx.gpu(), label_names=None)
@@ -159,7 +159,7 @@ for name in arg_names:
     if key in pretrained:
         arg_dict[name] = pretrained[key].copyto(mx.gpu())
 del pretrained
-'''
+
 img = None
 args.style_size[0] = args.style_size[0] // 4 * 4
 args.style_size[1] = args.style_size[1] // 4 * 4
@@ -178,12 +178,11 @@ for s in scales:
     for r in range(len(rotations)):
         arg_dict['data'][r:r+1] = preprocess_img(transform.rotate(scaled, rotations[r], mode='reflect'))
     #print(arg_dict.keys())
-    #vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
-    vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_params, grad_req='null')
+    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
+    #vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_params, grad_req='null')
     vgg_executor.forward()
     for l in range(args.num_res):
         tmp = vgg_executor.outputs[l].asnumpy()
-        print(vgg_executor.outputs[l].shape[2])
         for ii in range(0, vgg_executor.outputs[l].shape[2]-args.patch_size+1, args.stride):
             for jj in range(0, vgg_executor.outputs[l].shape[3]-args.patch_size+1, args.stride):
                 for r in range(len(rotations)):
@@ -197,8 +196,8 @@ for l in range(args.num_res):
 
 arg_dict['data'] = mx.nd.zeros([1,3,size[0],size[1]], mx.gpu())
 grad_dict = {"data": arg_dict["data"].copyto(mx.gpu())}
-#vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
-vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, aux_states=aux_params, grad_req='write')
+vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+#vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, aux_states=aux_params, grad_req='write')
 tv_grad_executor = get_tv_grad_executor(vgg_executor.arg_dict['data'], mx.gpu(), args.tv_weight) 
 optimizer = mx.optimizer.SGD(learning_rate=args.lr, wd=0e-0, momentum=0.9)
 
@@ -270,8 +269,8 @@ for idx in range(args.num_image):
     io.imsave('%s/data/image%d.jpg'%(args.model_name, idx), img)
 
 # Train a generative network
-#vgg_symbol = symbol.descriptor_symbol(1)
-vgg_symbol = fe_sym#symbol.descriptor_symbol(1)
+vgg_symbol = symbol.descriptor_symbol(1)
+#vgg_symbol = fe_sym#symbol.descriptor_symbol(1)
 vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
 decoder = symbol.decoder_symbol()
 arg_shapes, output_shapes, aux_shapes = decoder.infer_shape(data=vgg_executor.outputs[0].shape)

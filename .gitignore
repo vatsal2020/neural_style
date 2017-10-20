@@ -16,3 +16,5 @@ resnet18.params
 fast_mrf_cnn/models
 *_encoder/
 .ipynb_checkpoints/
+*.params
+*.json
