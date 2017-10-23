@@ -93,74 +93,78 @@ def vgg_symbol(data, weight, bias):
 
 
 def descriptor_resnet_symbol(num_res):
-    def conv(name, data, num_filter, pad, kernel, stride, no_bias, workspace):
-        return mx.sym.Convolution(name=name, data=data, weight=weight[name], num_filter=num_filter, pad=pad, kernel=kernel, stride=stride, no_bias=no_bias, workspace=workspace)
-    def bn(name, data, momentum):
-        return mx.sym.BatchNorm(data=data, gamma=gamma[name], beta=beta[name], momentum=momentum, name=name)
     data = mx.sym.Variable('data')
-    convs = ['unit1_conv1', 'unit1_conv2', 'unit2_conv1', 'unit2_conv2']
-    bns = ['unit1_bn1', 'unit1_bn2', 'unit2_bn1', 'unit2_bn2']
-    stages = ['stage1_', 'stage2_', 'stage3_', 'stage4_']
-    gamma = {}
-    beta = {}
-    weight = {}
-    gamma = mx.sym.Variable('bn_data'+'_gamma')
-    beta = mx.sym.Variable('bn_data'+'_beta')
-    weight = mx.sym.Variable('conv0'+'_weight')
-    gamma0 = {}
-    beta0 = {}
-    gamma0 = mx.sym.Variable('bn0'+'_gamma')
-    beta0 = mx.sym.Variable('bn0'+'_beta')
-    data = mx.sym.BatchNorm(name='bn_data', data=data, momentum=0.9, gamma=gamma['bn_data'+'_gamma'], beta=beta['bn_data'+'_beta'])
-    conv0 = mx.sym.Convolution(name='conv0', data=data, num_filter=64, pad=(0,0), kernel=(7,7), stride=(2,2), no_bias=True, workspace=1024, weight=weight['conv0_weight'])
-    bn0 = mx.sym.BatchNorm(name='bn0_', data=conv0, momentum=0.9, gamma=gamma0['bn0_gamma'], beta=beta0['bn0_beta'])
-    relu0 = mx.symbol.Activation(name='relu1', data=bn0 , act_type='relu')
-    data = mx.sym.Pooling(data=relu0, kernel=(3,3), stride=(2,2), pad=(0,0), pool_type='max')
-    s = stages[0]
+    num_filter = 64
+    conv0 = mx.sym.Convolution(name='conv0', data=data, weight=mx.sym.Variable('conv0_weight'), num_filter=num_filter, pad=(3,3), kernel=(7,7), stride=(2,2), no_bias=True, workspace=1024)
+    bn0 = mx.sym.BatchNorm(data=conv0, momentum=0.9, name='batchnorm0', gamma=mx.sym.Variable('batchnorm0_gamma'), beta=mx.sym.Variable('batchnorm0_beta'), moving_mean=mx.sym.Variable('batchnorm0_running_mean'), moving_var=mx.sym.Variable('batchnorm0_running_var'), fix_gamma=False)
+    relu0 = mx.symbol.Activation(name='relu0', data=bn0 , act_type='relu')
+    pool0 = mx.sym.Pooling(data=relu0, kernel=(3,3), stride=(2,2), pad=(1,1), pool_type='max')
     weight_var = {}
+    gamma_var = {}
     beta_var = {}
-    gamma_var = {} 
-    for k in convs:
-        weight_var[k] = mx.sym.Variable(s+k+'_weight')
-        #bias_var[k] = mx.sym.Variable(s+k+'_bias')
-    for b in bns:
-        beta_var[b] = mx.sym.Variable(s+b+'_beta')
-        gamma_var[b] = mx.sym.Variable(s+b+'_gamma')
-    print(weight_var.keys(), s)
-    out = resnet_symbol(data, weight_var, beta_var, gamma_var)
-    for i in range(num_res-1):
+    index = 0 
+    convs = ['conv0', 'conv1', 'conv2', 'conv3', 'conv4']
+    bns = ['batchnorm0', 'batchnorm1', 'batchnorm2', 'batchnorm3', 'batchnorm4']
+    s = ['stage1_', 'stage2_', 'stage3_', 'stage4_']
+    for i in range(num_res):
+        num_filter = 64 * (2**i)
+        print(s[i], num_filter)
         weight_var = {}
+        gamma_var = {}
         beta_var = {}
-        gamma_var = {} 
-        s = stages[i+1]
+        running_mean_var = {}
+        running_var_var = {}
         for k in convs:
-            weight_var[k] = mx.sym.Variable(s + k + '_weight')
-            #bias_var[k] = mx.sym.Variable(s+k+'_bias')
+            weight_var[s[i]+k] = mx.sym.Variable(s[i]+k+'_weight')
         for b in bns:
-            beta_var[b] = mx.sym.Variable(s + b + '_beta')
-            gamma_var[b] = mx.sym.Variable(s + b + '_gamma')
-        data = mx.sym.Convolution(name='conv0', data=data, num_filter=64, kernel=(1, 1), stride=(2, 2), no_bias=True, workspace=1024)
-        data = mx.sym.BatchNorm(data=data, momentum=0.9, name='bn0', fix_gamma=False)
-
-        out = mx.sym.Group([out, resnet_symbol(data, weight_var, beta_var, gamma_var)])
+            gamma_var[s[i]+b] =  mx.sym.Variable(s[i]+b+'_gamma')
+            beta_var[s[i]+b] =  mx.sym.Variable(s[i]+b+'_beta')
+            running_mean_var[s[i]+b] = mx.sym.Variable(s[i]+b+'_running_mean')
+            running_var_var[s[i]+b] =mx.sym.Variable(s[i]+b+'_running_var')
+        if i == 0:
+            out = resnet_symbol(pool0, weight_var, gamma_var, beta_var, running_mean_var, running_var_var, 0, s[i], num_filter)
+        else:
+            out = resnet_symbol(out, weight_var, gamma_var, beta_var, running_mean_var, running_var_var, 1, s[i], num_filter)
     return out
 
-def resnet_symbol(data, weight, beta, gamma, stage):
-    def conv(name, data, num_filter, pad, kernel, stride, no_bias, workspace):
-        return mx.sym.Convolution(name=name, data=data, weight=weight[name], num_filter=num_filter, pad=pad, kernel=kernel, stride=stride, no_bias=no_bias, workspace=workspace)
+
+def resnet_symbol(data, weight, gamma, beta, running_mean, running_var, index, stage, num_filter):
+    def conv(name, data, num_filter, pad, kernel, stride, workspace):
+        return mx.sym.Convolution(name=name, data=data, weight=weight[name], num_filter=num_filter, pad=pad, kernel=kernel, stride=stride, no_bias=True, workspace=workspace)
     def bn(name, data, momentum):
-        return mx.sym.BatchNorm(data=data, gamma=gamma[name], beta=beta[name], momentum=momentum, name=name, eps=1e-05)
-    conv1_1 = conv(name='unit1_conv1', data=data , num_filter=64, pad=(0,0), kernel=(3,3), stride=(2,2), no_bias=True, workspace=1024)
-    bn1_1 = bn(name='unit1_bn1', data=conv1_1, momentum=0.9)
-    relu1_1 = mx.symbol.Activation(name='relu1_1', data=bn1_1 , act_type='relu')
-    conv1_2 = conv(name='unit1_conv2', data=relu1_1 , num_filter=64, pad=(0,0), kernel=(3,3), stride=(2,2), no_bias=True, workspace=1024)
-    bn1_2 = bn(name='unit1_bn2', data=conv1_2, momentum=0.9)
-    conv2_1 = conv(name='unit2_conv1', data=bn1_2 , num_filter=64, pad=(0,0), kernel=(3,3), stride=(2,2), no_bias=True, workspace=1024)
-    bn2_1 = bn(name='unit2_bn1', data=conv2_1, momentum=0.9)
-    relu2_1 = mx.symbol.Activation(name='relu1_1', data=bn2_1 , act_type='relu')
-    conv2_2 = conv(name='unit2_conv2', data=relu2_1 , num_filter=64, pad=(0,0), kernel=(3,3), stride=(2,2), no_bias=True, workspace=1024)
-    bn2_2 = bn(name='unit2_bn2', data=conv2_2, momentum=0.9)
-    return bn2_2
+        return mx.sym.BatchNorm(data=data, momentum=momentum, name=name, gamma=gamma[name], beta=beta[name], moving_mean=running_mean[name], moving_var=running_var[name], fix_gamma=False)
+    if index == 0:
+        conv0 = conv(name=stage+'conv0', data=data , num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn0 = bn(data=conv0, momentum=0.9, name=stage+'batchnorm0')
+        relu0 = mx.symbol.Activation(name=stage+'relu0', data=bn0, act_type='relu')
+        conv1 = conv(name=stage+'conv1', data=relu0, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn1 = bn(data=conv1, momentum=0.9, name=stage+'batchnorm1')
+        relu1 = mx.symbol.Activation(name=stage+'relu1', data=bn1 + data, act_type='relu')
+        conv2 = conv(name=stage+'conv2', data=relu1, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn2 = bn(data=conv2, momentum=0.9, name=stage+'batchnorm2')
+        relu2 = mx.symbol.Activation(name=stage+'relu2', data=bn2, act_type='relu')
+        conv3 = conv(name=stage+'conv3', data=relu2, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn3 = bn(data=conv3, momentum=0.9, name=stage+'batchnorm3')
+        relu3 = mx.symbol.Activation(name=stage+'relu3', data=bn3, act_type='relu')
+        return relu3
+    elif index == 1:
+        conv0 = conv(name=stage+'conv0', data=data , num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(2,2), workspace=1024)
+        bn0 = bn(data=conv0, momentum=0.9, name=stage+'batchnorm0')
+        relu0 = mx.symbol.Activation(name=stage+'relu0', data=bn0, act_type='relu')
+        conv1 = conv(name=stage+'conv1', data=relu0, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn1 = bn(data=conv1, momentum=0.9, name=stage+'batchnorm1')
+        conv2 = conv(name=stage+'conv2', data=data, num_filter=num_filter, pad=(1,1), kernel=(1,1), stride=(2,2), workspace=1024)
+        bn2 = bn(data=conv2, momentum=0.9, name=stage+'batchnorm2')
+        relu1 = mx.symbol.Activation(name=stage+'relu1', data=bn1+bn2, act_type='relu')
+        conv3 = conv(name=stage+'conv3', data=relu1, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn3 = bn(data=conv3, momentum=0.9, name=stage+'batchnorm3')
+        relu3 = mx.symbol.Activation(name=stage+'relu3', data=bn3, act_type='relu')
+        conv4 = conv(name=stage+'conv4', data=relu3, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
+        bn4 = bn(data=conv4, momentum=0.9, name=stage+'batchnorm4')
+        relu4 = mx.symbol.Activation(name=stage+'relu4', data=bn4, act_type='relu')
+        return relu4
+    
+    
 
 class AssignPatch(mx.operator.NDArrayOp):
     def __init__(self):

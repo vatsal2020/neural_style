@@ -5,7 +5,7 @@ import mxnet as mx
 import numpy as np
 np.set_printoptions(precision=2)
 import argparse
-import symbol_resnet_final as symbol
+import symbol_resnet as symbol
 
 from skimage import io, transform, exposure, color
 
@@ -51,6 +51,7 @@ def postprocess_img(im):
 
 def crop_img(im, size):
     im = io.imread(im)
+    print("Hi",im.shape)
     if len(im.shape) == 2:
         im = color.gray2rgb(im)
     if im.shape[0]*size[1] > im.shape[1]*size[0]:
@@ -80,7 +81,7 @@ def get_mrf_executor(layer, patch_shape):
     patch_size = patch_shape[-1]
     data = mx.sym.Variable('conv')
     weight = mx.sym.Variable('weight')
-    dist = mx.sym.Convolution(data=data, weight=weight, kernel=(patch_size, patch_size), num_filter=patch_shape[0], no_bias=True)
+    dist = mx.sym.Convolution(data=data, weight=weight, kernel=(patch_size, patch_size), num_filter=patch_shape[0], no_bias=False)
     dist_executor = dist.bind(args={'conv': layer, 'weight': mx.nd.zeros(patch_shape, mx.gpu())}, ctx=mx.gpu())
     return dist_executor
 
@@ -93,7 +94,7 @@ def get_tv_grad_executor(img, ctx, tv_weight):
         mx.sym.Convolution(data=channels[i], weight=skernel,
                            num_filter=1,
                            kernel=(3, 3), pad=(1,1),
-                           no_bias=True, stride=(1,1))
+                           no_bias=False, stride=(1,1))
         for i in range(nchannel)])
     kernel = mx.nd.array(np.array([[0, -1, 0],
                                    [-1, 4, -1],
@@ -147,8 +148,8 @@ arg_dict = arg_params
 #print(arg_params.keys())
 '''
 
-vgg_symbol = symbol.descriptor_resnet_symbol(args.num_res)
-arg_names = vgg_symbol.list_arguments()
+resnet_symbol = symbol.descriptor_resnet_symbol(args.num_res)
+arg_names = resnet_symbol.list_arguments()
 arg_dict = {}
 pretrained = mx.nd.load(RESNETPATH)
 for name in arg_names:
@@ -157,8 +158,18 @@ for name in arg_names:
     key = name
     if key in pretrained.keys():
         arg_dict[name] = pretrained[key].copyto(mx.gpu())
+        
+        
+aux_names = resnet_symbol.list_auxiliary_states()
+aux_dict = {}
+for name in aux_names:
+    if name == "data":
+        continue
+    key = name
+    if key in pretrained:
+        aux_dict[name] = pretrained[key].copyto(mx.gpu())
+print(aux_dict.keys())
 del pretrained
-print(len(arg_dict.keys()), len(arg_names))
 
 img = None
 args.style_size[0] = args.style_size[0] // 4 * 4
@@ -174,12 +185,13 @@ patches = [[] for i in range(args.num_res)]
 patches_normed = []
 for s in scales:
     scaled = transform.rescale(style_img, s)
+    print("HHii", scaled.shape)
     arg_dict['data'] = mx.nd.zeros([len(rotations),3,scaled.shape[0],scaled.shape[1]], mx.gpu())
     for r in range(len(rotations)):
         arg_dict['data'][r:r+1] = preprocess_img(transform.rotate(scaled, rotations[r], mode='reflect'))
-    #print(arg_dict.keys())
-    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
-    #vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_params, grad_req='null')
+    #vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
+    print(arg_dict['data'].shape)
+    vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, grad_req='null')
     vgg_executor.forward()
     for l in range(args.num_res):
         tmp = vgg_executor.outputs[l].asnumpy()
@@ -197,8 +209,8 @@ for l in range(args.num_res):
 
 arg_dict['data'] = mx.nd.zeros([1,3,size[0],size[1]], mx.gpu())
 grad_dict = {"data": arg_dict["data"].copyto(mx.gpu())}
-vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
-#vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, aux_states=aux_params, grad_req='write')
+#vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, aux_states=aux_dict, grad_req='write')
 tv_grad_executor = get_tv_grad_executor(vgg_executor.arg_dict['data'], mx.gpu(), args.tv_weight) 
 optimizer = mx.optimizer.SGD(learning_rate=args.lr, wd=0e-0, momentum=0.9)
 
@@ -270,8 +282,8 @@ for idx in range(args.num_image):
     io.imsave('%s/data/image%d.jpg'%(args.model_name, idx), img)
 
 # Train a generative network
-vgg_symbol = symbol.descriptor_resnet_symbol(1)
-vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+resnet_symbol = symbol.descriptor_resnet_symbol(1)
+vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_params=aux_dict, args_grad=grad_dict, grad_req='write')
 decoder = symbol.decoder_symbol()
 arg_shapes, output_shapes, aux_shapes = decoder.infer_shape(data=vgg_executor.outputs[0].shape)
 arg_names = decoder.list_arguments()
