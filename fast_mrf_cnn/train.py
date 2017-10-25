@@ -6,6 +6,7 @@ import numpy as np
 np.set_printoptions(precision=2)
 import argparse
 import symbol
+from mxnet.gluon.model_zoo.vision import resnet18_v1
 
 from skimage import io, transform, exposure, color
 
@@ -105,59 +106,53 @@ def get_tv_grad_executor(img, ctx, tv_weight):
                                "kernel": kernel})
 
 
-#sym, arg_params, aux_params = mx.model.load_checkpoint('../vgg19', 0000)
-
-'''
-def get_fine_tune_model(symbol, arg_params, num_classes, layer_name='flatten0'):
-    """
-    symbol: the pretrained network symbol
-    arg_params: the argument parameters of the pretrained model
-    num_classes: the number of classes for the fine-tune datasets
-    layer_name: the layer name before the last fully-connected layer
-    """
-    all_layers = symbol.get_internals()
-    net = all_layers
-    net = mx.symbol.FullyConnected(data=net, num_hidden=num_classes, name='fc1')
-    net = mx.symbol.SoftmaxOutput(data=net, name='softmax')
-    new_args = dict({k:arg_params[k] for k in arg_params if 'fc1' not in k})
-    return (net, new_args)
-
-#(new_sym, new_args) = get_fine_tune_model(sym, arg_params, 1000)
-#sym = mx.symbol.SoftmaxOutput(data=sym, name='prob')
-#vgg_symbol = new_sym
-#arg_names = vgg_symbol.list_arguments()
-#print(arg_names)
-#arg_dict = {}
-#pretrained = mx.nd.load(VGGPATH)
+resnet = resnet18_v1(pretrained=True)
+def get_resnet_symbol(resnet, num_res):
+    resnet1 = resnet.features
+    data = mx.sym.Variable("data")
+    out = resnet1(data)
+    all_layers = out.get_internals()
+    sym0 = all_layers[43]
+    sym1 = all_layers[84]
+    sym2 = all_layers[125]
+    sym3 = all_layers[166]
+    resnet_symbol = mx.sym.Group([sym0, sym1, sym2, sym3])
+    length_prefix = len(resnet.name+'_')
+    return resnet_symbol[:num_res], length_prefix
 
 
-sym, arg_params, aux_params = mx.model.load_checkpoint('../resnet-18', 0)
-mod = mx.mod.Module(symbol=sym, context=mx.gpu(), label_names=None)
-mod.bind(for_training=False, data_shapes=[('data', (1,3,224,224))], 
-         label_shapes=mod._label_shapes)
-mod.set_params(arg_params, aux_params, allow_missing=True)
-all_layers = sym.get_internals()
-fe_sym = all_layers['flatten0_output']
-arg_names = fe_sym.list_arguments()
-#print(arg_names)
+
+flag = 'vgg'
+if flag == 'vgg':
+    vgg_symbol = symbol.descriptor_symbol(args.num_res)
+    pretrained = mx.nd.load(VGGPATH)
+    arg_names = vgg_symbol.list_arguments()
+elif flag == 'resnet':
+    resnet_symbol, length_prefix = get_resnet_symbol(resnet, args.num_res)
+    pretrained = mx.nd.load('../resnet18.params')
+    arg_names = resnet_symbol.list_arguments()
+    aux_names = resnet_symbol.list_auxiliary_states()
+    aux_dict = {}
+    for name in aux_names:
+        if name == "data":
+            continue
+        key = name[length_prefix:]
+        if key in pretrained:
+            aux_dict[name] = pretrained[key].copyto(mx.gpu())
+
+
 arg_dict = {}
-arg_params = {('%s' % k) : v.as_in_context(mx.gpu()) for k, v in arg_params.items()}
-aux_params = {('%s' % k) : v.as_in_context(mx.gpu()) for k, v in aux_params.items()}
-arg_dict = arg_params
-#print(arg_params.keys())
 
-'''
-vgg_symbol = symbol.descriptor_symbol(args.num_res)
-arg_names = vgg_symbol.list_arguments()
-print(arg_names)
-arg_dict = {}
-pretrained = mx.nd.load(VGGPATH)
 for name in arg_names:
     if name == "data":
         continue
-    key = "arg:" + name
+    if flag == 'vgg':
+        key = 'arg:' + name
+    elif flag == 'resnet':
+        key = name[length_prefix:]
     if key in pretrained:
         arg_dict[name] = pretrained[key].copyto(mx.gpu())
+        
 del pretrained
 
 img = None
@@ -177,9 +172,10 @@ for s in scales:
     arg_dict['data'] = mx.nd.zeros([len(rotations),3,scaled.shape[0],scaled.shape[1]], mx.gpu())
     for r in range(len(rotations)):
         arg_dict['data'][r:r+1] = preprocess_img(transform.rotate(scaled, rotations[r], mode='reflect'))
-    #print(arg_dict.keys())
-    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
-    #vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_params, grad_req='null')
+    if flag == 'vgg':
+        vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
+    elif flag == 'resnet':
+        vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, grad_req='null')
     vgg_executor.forward()
     for l in range(args.num_res):
         tmp = vgg_executor.outputs[l].asnumpy()
@@ -187,6 +183,7 @@ for s in scales:
             for jj in range(0, vgg_executor.outputs[l].shape[3]-args.patch_size+1, args.stride):
                 for r in range(len(rotations)):
                     patches[l].append(tmp[r,:,ii:ii+args.patch_size,jj:jj+args.patch_size])
+
 for l in range(args.num_res):
     patches[l] = np.array(patches[l])
     tmp = np.linalg.norm(np.reshape(patches[l], [patches[l].shape[0], np.prod(patches[l].shape[1:])]), axis=1)
@@ -196,8 +193,11 @@ for l in range(args.num_res):
 
 arg_dict['data'] = mx.nd.zeros([1,3,size[0],size[1]], mx.gpu())
 grad_dict = {"data": arg_dict["data"].copyto(mx.gpu())}
-vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
-#vgg_executor = fe_sym.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, aux_states=aux_params, grad_req='write')
+if flag == 'vgg':
+    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+elif flag == 'resnet':
+    vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, grad_req='null')
+
 tv_grad_executor = get_tv_grad_executor(vgg_executor.arg_dict['data'], mx.gpu(), args.tv_weight) 
 optimizer = mx.optimizer.SGD(learning_rate=args.lr, wd=0e-0, momentum=0.9)
 
@@ -269,9 +269,13 @@ for idx in range(args.num_image):
     io.imsave('%s/data/image%d.jpg'%(args.model_name, idx), img)
 
 # Train a generative network
-vgg_symbol = symbol.descriptor_symbol(1)
-#vgg_symbol = fe_sym#symbol.descriptor_symbol(1)
-vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+if flag == 'vgg':
+    vgg_symbol = symbol.descriptor_symbol(1)
+    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+elif flag == 'resnet':
+    resnet_symbol, dummy_var = get_resnet_symbol(resnet, 1)
+    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, args_grad=grad_dict, grad_req='write')
+
 decoder = symbol.decoder_symbol()
 arg_shapes, output_shapes, aux_shapes = decoder.infer_shape(data=vgg_executor.outputs[0].shape)
 arg_names = decoder.list_arguments()

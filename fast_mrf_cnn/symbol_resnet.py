@@ -1,5 +1,6 @@
 import mxnet as mx
 import numpy as np
+import copy
 
 def block(data, num_filter, name):
     data2 = conv(data, num_filter, 1, name)
@@ -123,8 +124,10 @@ def descriptor_resnet_symbol(num_res):
             running_var_var[s[i]+b] =mx.sym.Variable(s[i]+b+'_running_var')
         if i == 0:
             out = resnet_symbol(pool0, weight_var, gamma_var, beta_var, running_mean_var, running_var_var, 0, s[i], num_filter)
+            out1 = copy.deepcopy(out)
         else:
-            out = resnet_symbol(out, weight_var, gamma_var, beta_var, running_mean_var, running_var_var, 1, s[i], num_filter)
+            out1 = resnet_symbol(out1, weight_var, gamma_var, beta_var, running_mean_var, running_var_var, 1, s[i], num_filter)
+            out = mx.sym.Group([out, out1])
     return out
 
 
@@ -155,7 +158,7 @@ def resnet_symbol(data, weight, gamma, beta, running_mean, running_var, index, s
         bn1 = bn(data=conv1, momentum=0.9, name=stage+'batchnorm1')
         conv2 = conv(name=stage+'conv2', data=data, num_filter=num_filter, pad=(1,1), kernel=(1,1), stride=(2,2), workspace=1024)
         bn2 = bn(data=conv2, momentum=0.9, name=stage+'batchnorm2')
-        relu1 = mx.symbol.Activation(name=stage+'relu1', data=bn1+bn2, act_type='relu')
+        relu1 = mx.symbol.Activation(name=stage+'relu1', data=bn1, act_type='relu')
         conv3 = conv(name=stage+'conv3', data=relu1, num_filter=num_filter, pad=(1,1), kernel=(3,3), stride=(1,1), workspace=1024)
         bn3 = bn(data=conv3, momentum=0.9, name=stage+'batchnorm3')
         relu3 = mx.symbol.Activation(name=stage+'relu3', data=bn3, act_type='relu')
