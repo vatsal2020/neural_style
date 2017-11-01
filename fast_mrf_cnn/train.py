@@ -26,8 +26,11 @@ parser.add_argument('--num-rotation', type=int)
 parser.add_argument('--num-scale', type=int)
 parser.add_argument('--stride', type=int)
 parser.add_argument('--patch-size', type=int)
+parser.add_argument('--net', type=str)
+parser.add_argument('--gpu', type=int)
 
 args = parser.parse_args()
+ctx1=mx.gpu(args.gpu)
 VGGPATH = '../vgg19.params'
 RESNETPATH= '../resnet18.params'
 COCOPATH = '/home/ubuntu/data/train2014'
@@ -82,7 +85,7 @@ def get_mrf_executor(layer, patch_shape):
     data = mx.sym.Variable('conv')
     weight = mx.sym.Variable('weight')
     dist = mx.sym.Convolution(data=data, weight=weight, kernel=(patch_size, patch_size), num_filter=patch_shape[0], no_bias=True)
-    dist_executor = dist.bind(args={'conv': layer, 'weight': mx.nd.zeros(patch_shape, mx.gpu())}, ctx=mx.gpu())
+    dist_executor = dist.bind(args={'conv': layer, 'weight': mx.nd.zeros(patch_shape, ctx1)}, ctx=ctx1)
     return dist_executor
 
 def get_tv_grad_executor(img, ctx, tv_weight):
@@ -107,28 +110,15 @@ def get_tv_grad_executor(img, ctx, tv_weight):
 
 
 resnet = resnet18_v1(pretrained=True)
-def get_resnet_symbol(resnet, num_res):
-    resnet1 = resnet.features
-    data = mx.sym.Variable("data")
-    out = resnet1(data)
-    all_layers = out.get_internals()
-    sym0 = all_layers[43]
-    sym1 = all_layers[84]
-    sym2 = all_layers[125]
-    sym3 = all_layers[166]
-    resnet_symbol = mx.sym.Group([sym0, sym1, sym2, sym3])
-    length_prefix = len(resnet.name+'_')
-    return resnet_symbol[:num_res], length_prefix
 
 
-
-flag = 'vgg'
+flag = args.net
 if flag == 'vgg':
     vgg_symbol = symbol.descriptor_symbol(args.num_res)
     pretrained = mx.nd.load(VGGPATH)
     arg_names = vgg_symbol.list_arguments()
 elif flag == 'resnet':
-    resnet_symbol, length_prefix = get_resnet_symbol(resnet, args.num_res)
+    resnet_symbol, length_prefix = symbol.get_resnet_symbol(resnet, args.num_res)
     pretrained = mx.nd.load('../resnet18.params')
     arg_names = resnet_symbol.list_arguments()
     aux_names = resnet_symbol.list_auxiliary_states()
@@ -138,7 +128,7 @@ elif flag == 'resnet':
             continue
         key = name[length_prefix:]
         if key in pretrained:
-            aux_dict[name] = pretrained[key].copyto(mx.gpu())
+            aux_dict[name] = pretrained[key].copyto(ctx1)
 
 
 arg_dict = {}
@@ -151,7 +141,7 @@ for name in arg_names:
     elif flag == 'resnet':
         key = name[length_prefix:]
     if key in pretrained:
-        arg_dict[name] = pretrained[key].copyto(mx.gpu())
+        arg_dict[name] = pretrained[key].copyto(ctx1)
         
 del pretrained
 
@@ -169,13 +159,13 @@ patches = [[] for i in range(args.num_res)]
 patches_normed = []
 for s in scales:
     scaled = transform.rescale(style_img, s)
-    arg_dict['data'] = mx.nd.zeros([len(rotations),3,scaled.shape[0],scaled.shape[1]], mx.gpu())
+    arg_dict['data'] = mx.nd.zeros([len(rotations),3,scaled.shape[0],scaled.shape[1]], ctx1)
     for r in range(len(rotations)):
         arg_dict['data'][r:r+1] = preprocess_img(transform.rotate(scaled, rotations[r], mode='reflect'))
     if flag == 'vgg':
-        vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, grad_req='null')
+        vgg_executor = vgg_symbol.bind(ctx=ctx1, args=arg_dict, grad_req='null')
     elif flag == 'resnet':
-        vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, grad_req='null')
+        vgg_executor = resnet_symbol.bind(ctx=ctx1, args=arg_dict, aux_states=aux_dict, grad_req='null')
     vgg_executor.forward()
     for l in range(args.num_res):
         tmp = vgg_executor.outputs[l].asnumpy()
@@ -189,16 +179,16 @@ for l in range(args.num_res):
     tmp = np.linalg.norm(np.reshape(patches[l], [patches[l].shape[0], np.prod(patches[l].shape[1:])]), axis=1)
     norm = np.reshape(tmp, [tmp.shape[0],1,1,1])
     patches_normed.append(patches[l]/norm)
-    patches[l] = mx.nd.array(patches[l], mx.gpu())
+    patches[l] = mx.nd.array(patches[l], ctx1)
 
-arg_dict['data'] = mx.nd.zeros([1,3,size[0],size[1]], mx.gpu())
-grad_dict = {"data": arg_dict["data"].copyto(mx.gpu())}
+arg_dict['data'] = mx.nd.zeros([1,3,size[0],size[1]], ctx1)
+grad_dict = {"data": arg_dict["data"].copyto(ctx1)}
 if flag == 'vgg':
-    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+    vgg_executor = vgg_symbol.bind(ctx=ctx1, args=arg_dict, args_grad=grad_dict, grad_req='write')
 elif flag == 'resnet':
-    vgg_executor = resnet_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, grad_req='null')
+    vgg_executor = resnet_symbol.bind(ctx=ctx1, args=arg_dict, aux_states=aux_dict, args_grad=grad_dict, grad_req='write')
 
-tv_grad_executor = get_tv_grad_executor(vgg_executor.arg_dict['data'], mx.gpu(), args.tv_weight) 
+tv_grad_executor = get_tv_grad_executor(vgg_executor.arg_dict['data'], ctx1, args.tv_weight) 
 optimizer = mx.optimizer.SGD(learning_rate=args.lr, wd=0e-0, momentum=0.9)
 
 # get mrf executor
@@ -216,10 +206,10 @@ for l in range(args.num_res):
     for i1 in range(0, vgg_executor.outputs[l].shape[2]-args.patch_size+1):
         for i2 in range(0, vgg_executor.outputs[l].shape[3]-args.patch_size+1):
             pc[0,:,i1:i1+args.patch_size,i2:i2+args.patch_size] += 1
-    pc = mx.nd.array(pc, mx.gpu())
-    nn = mx.nd.zeros([vgg_executor.outputs[l].shape[2]-args.patch_size+1, vgg_executor.outputs[l].shape[3]-args.patch_size+1], mx.gpu())
+    pc = mx.nd.array(pc, ctx1)
+    nn = mx.nd.zeros([vgg_executor.outputs[l].shape[2]-args.patch_size+1, vgg_executor.outputs[l].shape[3]-args.patch_size+1], ctx1)
     assign_symbol = symbol.assign_symbol()
-    assign_executor = assign_symbol.bind(args={'source':patches[l], 'nn':nn}, ctx=mx.gpu())
+    assign_executor = assign_symbol.bind(args={'source':patches[l], 'nn':nn}, ctx=ctx1)
     assign_executor.forward()
     pcs.append(pc)
     ass_executors.append(assign_executor)
@@ -237,7 +227,7 @@ for idx in range(args.num_image):
     vgg_executor.forward()
     original_content = []
     for l in range(args.num_res):
-        original_content.append(vgg_executor.outputs[l].copyto(mx.gpu()))
+        original_content.append(vgg_executor.outputs[l].copyto(ctx1))
     for epoch in range(args.epochs):
         vgg_executor.forward(is_train=True)
         if epoch % 10 == 0:
@@ -271,26 +261,26 @@ for idx in range(args.num_image):
 # Train a generative network
 if flag == 'vgg':
     vgg_symbol = symbol.descriptor_symbol(1)
-    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, grad_req='write')
+    vgg_executor = vgg_symbol.bind(ctx=ctx1, args=arg_dict, args_grad=grad_dict, grad_req='write')
 elif flag == 'resnet':
-    resnet_symbol, dummy_var = get_resnet_symbol(resnet, 1)
-    vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict, args_grad=grad_dict, grad_req='write')
+    resnet_symbol, dummy = symbol.get_resnet_symbol(resnet, 1)
+    vgg_executor = resnet_symbol.bind(ctx=ctx1, args=arg_dict, aux_states=aux_dict, args_grad=grad_dict, grad_req='write')
 
 decoder = symbol.decoder_symbol()
 arg_shapes, output_shapes, aux_shapes = decoder.infer_shape(data=vgg_executor.outputs[0].shape)
 arg_names = decoder.list_arguments()
-arg_dict = dict(zip(arg_names, [mx.nd.zeros(shape, ctx=mx.gpu()) for shape in arg_shapes]))
+arg_dict = dict(zip(arg_names, [mx.nd.zeros(shape, ctx=ctx1) for shape in arg_shapes]))
 aux_names = decoder.list_auxiliary_states()
-aux_dict = dict(zip(aux_names, [mx.nd.zeros(shape, ctx=mx.gpu()) for shape in aux_shapes]))
+aux_dict = dict(zip(aux_names, [mx.nd.zeros(shape, ctx=ctx1) for shape in aux_shapes]))
 grad_dict = {}
 for k in arg_dict:
     if k != 'data':
-        grad_dict[k] = arg_dict[k].copyto(mx.gpu())
+        grad_dict[k] = arg_dict[k].copyto(ctx1)
 initializer = mx.init.Normal(1e-3)
 for name in arg_names:
     if name != 'data':
         initializer(name, arg_dict[name])
-deco_executor = decoder.bind(ctx=mx.gpu(), args=arg_dict, args_grad=grad_dict, aux_states=aux_dict, grad_req='write')
+deco_executor = decoder.bind(ctx=ctx1, args=arg_dict, args_grad=grad_dict, aux_states=aux_dict, grad_req='write')
 
 
 optimizer = mx.optimizer.SGD(learning_rate=1e-10, wd=0e-0, momentum=0.9)
@@ -300,7 +290,7 @@ for i, var in enumerate(deco_executor.grad_dict):
         optim_states.append(optimizer.create_state(i, deco_executor.arg_dict[var]))
     else:
         optim_states.append([])
-img_grad = mx.nd.empty((1,3,512,512), mx.gpu())
+img_grad = mx.nd.empty((1,3,512,512), ctx1)
 
 argstosave = {}
 auxstosave = {}
@@ -324,7 +314,7 @@ for idx in range(100*args.num_image):
 
     vgg_executor.arg_dict['data'][:] = im_target
     vgg_executor.forward()
-    target_content = vgg_executor.outputs[0].copyto(mx.gpu())
+    target_content = vgg_executor.outputs[0].copyto(ctx1)
     vgg_executor.arg_dict['data'][:] = im_content
     vgg_executor.forward()
     deco_executor.arg_dict['data'][:] = vgg_executor.outputs[0]

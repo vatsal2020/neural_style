@@ -91,43 +91,20 @@ def vgg_symbol(data, weight, bias):
     relu3_1 = mx.symbol.Activation(name='relu3_1', data=conv3_1 , act_type='relu')
     return relu3_1
 
+def get_resnet_symbol(resnet, num_res):
+    resnet1 = resnet.features
+    data = mx.sym.Variable("data")
+    out = resnet1(data)
+    all_layers = out.get_internals()
+    sym0 = all_layers[43]
+    sym1 = all_layers[84]
+    sym2 = all_layers[125]
+    sym3 = all_layers[166]
+    resnet_symbol = mx.sym.Group([sym0, sym1, sym2, sym3])
+    length_prefix = len(resnet.name+'_')
+    out1 = mx.sym.UpSampling(sym3, scale=8, num_filter=64, sample_type='nearest', num_args=1)
+    return out1, length_prefix
 
-def descriptor_symbol_res(num_res):
-    data = mx.sym.Variable('data')
-    convs = ['conv0', 'conv1', 'conv2', 'conv3', 'conv4']
-    bns = ['batchnorm0', 'batchnorm1', 'batchnorm2', 'batchnorm3', 'batchnorm4']
-    stages = ['', 'stage1', 'stage2', 'stage3', 'stage4']
-    for s in stages:
-        for k in convs:
-            weight_var[k] = mx.sym.Variable(s+k+'_weight')
-            #bias_var[k] = mx.sym.Variable(s+k+'_bias')
-        for b in bns:
-            mean_var[b] = mx.sym.Variable(s+b+'_running_mean')
-            variance_var[b] = mx.sym.Variable(s+b+'_running_var')
-            beta_var[b] = mx.sym.Variable(s+b+'_beta')
-            gamma_var[b] = mx.sym.Variable(s+b+'_gamma')
-        out = resnet_symbol(data, weight_var, mean_var, variance_var, beta_var, gamma_var)
-        for i in range(num_res-1):
-            data = mx.sym.Pooling(data=data, kernel=(2,2), stride=(2,2), pad=(0,0), pool_type='avg')
-            out = mx.sym.Group([out, vgg_symbol(data, weight_var, bias_var)])
-    return out
-
-def resnet_symbol(data, weight, bias):
-    def conv(name, data, num_filter, pad, kernel, stride, no_bias, workspace):
-        return mx.sym.Convolution(name=name, data=data, weight=weight[name], bias=bias[name], num_filter=num_filter, pad=pad, kernel=kernel, stride=stride, no_bias=no_bias, workspace=workspace)
-    conv1_1 = conv(name='conv1_1', data=data , num_filter=64, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
-    relu1_1 = mx.symbol.Activation(name='relu1_1', data=conv1_1 , act_type='relu')
-    conv1_2 = conv(name='conv1_2', data=relu1_1 , num_filter=64, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
-    relu1_2 = mx.symbol.Activation(name='relu1_2', data=conv1_2 , act_type='relu')
-    pool1 = mx.symbol.Pooling(name='pool1', data=relu1_2 , pad=(0,0), kernel=(2,2), stride=(2,2), pool_type='avg')
-    conv2_1 = conv(name='conv2_1', data=pool1 , num_filter=128, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
-    relu2_1 = mx.symbol.Activation(name='relu2_1', data=conv2_1 , act_type='relu')
-    conv2_2 = conv(name='conv2_2', data=relu2_1 , num_filter=128, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
-    relu2_2 = mx.symbol.Activation(name='relu2_2', data=conv2_2 , act_type='relu')
-    pool2 = mx.symbol.Pooling(name='pool2', data=relu2_2 , pad=(0,0), kernel=(2,2), stride=(2,2), pool_type='avg')
-    conv3_1 = conv(name='conv3_1', data=pool2 , num_filter=256, pad=(1,1), kernel=(3,3), stride=(1,1), no_bias=False, workspace=1024)
-    relu3_1 = mx.symbol.Activation(name='relu3_1', data=conv3_1 , act_type='relu')
-    return relu3_1
 
 class AssignPatch(mx.operator.NDArrayOp):
     def __init__(self):

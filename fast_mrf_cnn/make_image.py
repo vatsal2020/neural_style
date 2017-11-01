@@ -50,7 +50,7 @@ def postprocess_img(im):
 
 class Maker():
     def __init__(self, model_prefix, output_shape):
-        vgg_symbol = symbol.descriptor_resnet_symbol(1)
+        vgg_symbol = symbol.get_resnet_symbol(1)
         arg_names = vgg_symbol.list_arguments()
         arg_dict = {}
         pretrained = mx.nd.load(RESNETPATH)
