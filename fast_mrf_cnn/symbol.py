@@ -99,7 +99,7 @@ def get_resnet_symbol(resnet, num_res):
     sym0 = all_layers[43]
     sym1 = all_layers[84]
     sym2 = all_layers[125]
-    sym3 = all_layers[166]
+    sym3 = all_layers[164]
     resnet_symbol = mx.sym.Group([sym0, sym1, sym2, sym3])
     length_prefix = len(resnet.name+'_')
     out1 = mx.sym.UpSampling(sym3, scale=8, num_filter=64, sample_type='nearest', num_args=1)

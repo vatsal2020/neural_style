@@ -7,8 +7,10 @@ np.set_printoptions(precision=2)
 import symbol
 from skimage import io, transform
 
+ctx1=mx.gpu(args.gpu)
 VGGPATH = '../vgg19.params'
-MSCOCOPATH = '/home/zw/dataset/mscoco'
+RESNETPATH= '../resnet18.params'
+COCOPATH = '/home/ubuntu/data/train2014'
 
 def postprocess_img(im):
 #     im = im[0]
@@ -87,6 +89,7 @@ def init_executor(batch_size, weights=[1,1,1,1], style_layers=['relu1_1','relu2_
     size = 256 
     initializer = mx.init.Normal(1e-8)
     descriptor = symbol.descriptor_symbol(content_layer=content_layer, style_layers=style_layers)
+    descriptor = symbol.get_resnet_symbol(content_layer=content_layer, style_layers=style_layers)
     arg_shapes, output_shapes, aux_shapes = descriptor.infer_shape(data=(batch_size, 3, size, size))
     arg_names = descriptor.list_arguments()
     arg_dict = dict(zip(arg_names, [mx.nd.zeros(shape, ctx=mx.gpu()) for shape in arg_shapes]))

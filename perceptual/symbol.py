@@ -70,3 +70,16 @@ def descriptor_symbol(style_layers=['relu1_1', 'relu2_1', 'relu3_1', 'relu4_1', 
     style_out = mx.sym.Group([x for x in map(eval, style_layers)])
     return mx.sym.Group([style_out, eval(content_layer)])
 
+def get_resnet_symbol(resnet, num_res):
+    resnet1 = resnet.features
+    data = mx.sym.Variable("data")
+    out = resnet1(data)
+    all_layers = out.get_internals()
+    sym0 = all_layers[43]
+    sym1 = all_layers[84]
+    sym2 = all_layers[125]
+    sym3 = all_layers[164]
+    resnet_symbol = mx.sym.Group([sym0, sym1, sym2, sym3])
+    length_prefix = len(resnet.name+'_')
+    out1 = mx.sym.UpSampling(sym3, scale=8, num_filter=64, sample_type='nearest', num_args=1)
+    return out1, length_prefix
