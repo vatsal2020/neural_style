@@ -1,5 +1,6 @@
 import mxnet as mx
 import numpy as np
+import copy 
 
 def block(data, num_filter, name):
     data2 = conv(data, num_filter, 1, name)
@@ -15,6 +16,7 @@ def conv(data, num_filter, stride, name):
 
 def decoder_symbol():
     data = mx.sym.Variable('data')
+    d1 = copy.deepcopy(data)
     data = mx.sym.Convolution(data=data, num_filter=256, kernel=(3,3), pad=(1,1), stride=(1, 1), name='deco_conv1')
     data = mx.sym.BatchNorm(data=data, momentum=0.9, name='deco_bn1')
     data = mx.sym.Activation(data=data, act_type='relu')
@@ -96,14 +98,14 @@ def get_resnet_symbol(resnet, num_res):
     data = mx.sym.Variable("data")
     out = resnet1(data)
     all_layers = out.get_internals()
-    sym0 = all_layers[43]
-    sym1 = all_layers[84]
-    sym2 = all_layers[125]
+    sym0 = all_layers[41]
+    sym1 = all_layers[82]
+    sym2 = all_layers[123]
     sym3 = all_layers[164]
     resnet_symbol = mx.sym.Group([sym0, sym1, sym2, sym3])
     length_prefix = len(resnet.name+'_')
-    out1 = mx.sym.UpSampling(sym3, scale=8, num_filter=64, sample_type='nearest', num_args=1)
-    return out1, length_prefix
+    #out1 = mx.sym.UpSampling(resnet_symbol, scale=8, num_filter=64, sample_type='nearest', num_args=1)
+    return resnet_symbol[:num_res], length_prefix
 
 
 class AssignPatch(mx.operator.NDArrayOp):

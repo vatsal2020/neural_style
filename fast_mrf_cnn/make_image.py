@@ -2,13 +2,12 @@ import os
 import time
 import mxnet as mx
 import numpy as np
-import symbol_resnet as symbol
+import symbol
 import cPickle as pickle
 from matplotlib import pyplot as plt
 from skimage import io, transform
 
 VGGPATH = '../vgg19.params'
-RESNETPATH = '../resnet18.params'
 
 def crop_img(im, size):
     im = io.imread(im)
@@ -50,34 +49,24 @@ def postprocess_img(im):
 
 class Maker():
     def __init__(self, model_prefix, output_shape):
-        vgg_symbol = symbol.get_resnet_symbol(1)
+        vgg_symbol = symbol.descriptor_symbol(1)
         arg_names = vgg_symbol.list_arguments()
         arg_dict = {}
-        pretrained = mx.nd.load(RESNETPATH)
+        pretrained = mx.nd.load(VGGPATH)
         for name in arg_names:
             if name == "data":
                 continue
-            key = name
+            key = "arg:" + name
             if key in pretrained:
                 arg_dict[name] = pretrained[key].copyto(mx.gpu())
-                
-        aux_names = vgg_symbol.list_auxiliary_states()
-        aux_dict = {}
-        for name in aux_names:
-            if name == "data":
-                continue
-            key = name
-            if key in pretrained:
-                aux_dict[name] = pretrained[key].copyto(mx.gpu())
         del pretrained
-        
         s1, s0 = output_shape
         s0 = s0//32*32
         s1 = s1//32*32
         self.s0 = s0
         self.s1 = s1
         arg_dict['data'] = mx.nd.zeros([1,3,s0,s1], mx.gpu())
-        self.vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict, aux_states=aux_dict)
+        self.vgg_executor = vgg_symbol.bind(ctx=mx.gpu(), args=arg_dict)
         decoder = symbol.decoder_symbol()
         args = mx.nd.load('%s_decoder_args.nd'%model_prefix)
         auxs = mx.nd.load('%s_decoder_auxs.nd'%model_prefix)

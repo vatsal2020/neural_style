@@ -112,7 +112,7 @@ def get_tv_grad_executor(img, ctx, tv_weight):
 resnet = resnet18_v1(pretrained=True)
 
 
-flag = args.net
+flag = 'vgg'#args.net
 if flag == 'vgg':
     vgg_symbol = symbol.descriptor_symbol(args.num_res)
     pretrained = mx.nd.load(VGGPATH)
